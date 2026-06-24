@@ -1,0 +1,23 @@
+## 项目背景：
+我想要在本地复现论文`init\Goedel-Architect Streamlining Formal Theorem Proving with Blueprint Generation and Refinement.pdf`中的Goedel-Architect基本架构。论文是一个Lean4 Agent的基本框架，可以高效求解复杂的Lean4难题。为此我准备了以下资源：
+
+### 资源：
+- **lean4校验环境**: 参考`init\kimina-lean-server-offline`中的内容，使用本地的kimina-lean-server作为lean4校验服务器，需要安装kimina_client才能与服务器通信。
+- **mathlib-search工具**: 第三方开源的一个mathlib4定理召回服务，参考`init\mathlib-search-tools`中的内容，使用这个服务时，请每次只发送一个请求，间隔一段时间再重复请求，以免超时（该服务载量很小）。
+- **核心llm**: 参考`init\model_client`中的内容。我将模型的信息放在了`.env`中。
+- **用于测试的lean4问题**: `lean4_problems`文件夹中的内容。
+
+### 要求：
+- 在本地运行python时，请使用uv安装相应的包
+- 你负责规划，具体执行任务时请使用subagent让sonnet来执行
+- 遇到资源、环境、网络问题随时与我沟通
+
+### 推荐执行顺序：
+- 阅读论文`init\Goedel-Architect Streamlining Formal Theorem Proving with Blueprint Generation and Refinement.pdf`。如果觉得pdf不方便，也可以阅读他的在线网页版本：`https://arxiv.org/html/2606.06468v1`。初步理解框架需求，包括论文使用的prompt等等，先不实现。
+- 熟悉项目环境与资源：
+-- 1）在本地拉起kimina-lean-server容器后，测试请求正常
+-- 2）在本地使用mathlib-search工具后，测试请求正常
+-- 3）在本地测试`init\model_client`，请求正常
+- 规划项目实现架构，请使用python语言，然后制定详细的spec完成项目实现。
+-- 1）构建项目抽象
+-- 2）将lean4代码校验、mathlib-search等注册为工具

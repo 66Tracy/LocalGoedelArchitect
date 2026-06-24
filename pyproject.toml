@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "local_goedel"
+version = "0.1.0"
+description = "Local Goedel Architect - Lean 4 theorem prover"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0",
+    "requests>=2.28",
+    "pydantic>=2.0",
+    "tenacity>=8.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+local-goedel = "local_goedel.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/local_goedel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks integration tests",
+]

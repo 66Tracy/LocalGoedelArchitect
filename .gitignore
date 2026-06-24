@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- Project-specific (Local Goedel-Architect) ----
+# Generated pipeline run artifacts (blueprints, per-node results, final proofs, logs)
+runs/
+# Leandex search CLI log
+cli.log
+# Scratch/working files
+scratchpad/
