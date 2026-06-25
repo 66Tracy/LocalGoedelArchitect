@@ -9,7 +9,7 @@ from pathlib import Path
 
 @dataclass
 class Settings:
-    model_name: str = "deepseek-chat"
+    model_name: str = "deepseek-v4-flash"
     base_url: str = "https://api.deepseek.com"
     api_key: str = ""
     lean_server_url: str = "http://localhost:8000"
@@ -22,7 +22,7 @@ class Settings:
     prover_max_tool_calls: int = 40
     prover_max_turns: int = 60
     reasoning_effort: str = "high"
-    enable_thinking: bool = False
+    enable_thinking: bool = True
     artifacts_dir: Path = field(default_factory=lambda: Path("artifacts"))
 
     # Phase 2 fields
@@ -32,6 +32,11 @@ class Settings:
     refiner_max_retries: int = 6
     max_wall_s: int = 3600
     runs_dir: str = "runs"
+
+    # Ablation mode: "full" | "tool_loop" | "oneshot"
+    mode: str = "full"
+    # Number of LLM completions for oneshot mode (default 1 = truly single-shot)
+    oneshot_retries: int = 1
 
 
 _PS_LINE = re.compile(r'^\s*\$env:(\w+)\s*=\s*(.+)$')
@@ -64,7 +69,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         return parsed.get(key) or os.environ.get(key, default)
 
     settings = Settings(
-        model_name=_get("MODEL_NAME", "deepseek-chat"),
+        model_name=_get("MODEL_NAME", "deepseek-v4-flash"),
         base_url=_get("BASE_URL", "https://api.deepseek.com"),
         api_key=_get("DEEPSEEK_API_KEY", ""),
         lean_server_url=_get("LEAN_SERVER_URL", "http://localhost:8000"),
@@ -74,5 +79,19 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
         ),
         leandex_api_key=_get("LEANDEX_API_KEY", ""),
         artifacts_dir=Path(_get("ARTIFACTS_DIR", "artifacts")),
+        mode=_get("MODE", "full"),
     )
     return settings
+
+
+_VALID_MODES = frozenset({"full", "tool_loop", "oneshot"})
+
+
+def validate_mode(mode: str) -> str:
+    """Validate and return the mode string; raise ValueError on unknown mode."""
+    if mode not in _VALID_MODES:
+        raise ValueError(
+            f"Unknown pipeline mode {mode!r}. "
+            f"Valid modes are: {sorted(_VALID_MODES)}"
+        )
+    return mode

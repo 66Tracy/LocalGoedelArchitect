@@ -72,7 +72,13 @@ class LLMClient:
                         usage.completion_tokens,
                         usage.total_tokens,
                     )
-                return response.choices[0].message
+                message = response.choices[0].message
+                reasoning_content = getattr(message, "reasoning_content", None)
+                if reasoning_content:
+                    self._logger.debug(
+                        "LLM thinking: %s", reasoning_content[:500]
+                    )
+                return message
             except RateLimitError as e:
                 last_exc = e
                 wait = 2 ** attempt * 5

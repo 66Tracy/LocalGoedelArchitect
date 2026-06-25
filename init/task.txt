@@ -1,3 +1,4 @@
+# 2026/06/23
 ## 项目背景：
 我想要在本地复现论文`init\Goedel-Architect Streamlining Formal Theorem Proving with Blueprint Generation and Refinement.pdf`中的Goedel-Architect基本架构。论文是一个Lean4 Agent的基本框架，可以高效求解复杂的Lean4难题。为此我准备了以下资源：
 
@@ -21,3 +22,26 @@
 - 规划项目实现架构，请使用python语言，然后制定详细的spec完成项目实现。
 -- 1）构建项目抽象
 -- 2）将lean4代码校验、mathlib-search等注册为工具
+
+
+# 2026/06/24
+当前项目实现基本满意~
+
+## 项目修改建议：
+- `model_name`应该使用"deepseek-v4-flash"，"enable_thinking"默认为True，而不是"deepseek-chat"，chat无法开启thinking，请修正。正确使用thinking模式应该是足以解决部分Putnam difficulty的。
+- 论文C.2.Theorem proving中有一段"- If your code includes the MAIN theorem with the canonical statement followed by ‘:= by ...‘, the system rebuilds under the original theorem statement: only your ‘:= by‘ proof body is kept from your submission; the imports, ‘set_option‘, and ‘open‘ lines come from the canonical formal statement, and any other top-level declarations are dropped. Only this case can register a solve. Do not use ‘axiom‘ or ‘native_decide‘; use ‘have‘ for helper lemmas inside your proof, not top-level declarations; and do not add ‘import‘ or ‘open‘ lines that are not already in the canonical formal statement -- any extras will be flagged as a safeguard violation, not silently kept."，这一段很重要，我希望我们最终验收lean4提交时也采用这种方式，以免prover作弊，修改theorem本身来绕过答题。
+- 新增`init\kimina-lean-server-offline\kimina_client.py`，给了一个kimina_client的使用示例，可以通过`status = res.results[0].analyze().status.value`获得status，status有"valid\lean_error\sorry\timeout_error"四种状态，比较清晰。最终valid就是通过。请相应修改"lean_compile"。且每次可以使用reuse=False来开启一个新的repl，不需要反复使用一个repl。
+- 修改代码适配无blueprint版本：我想做ablation study，当没有blueprint时，仅仅靠"lean_compile"和"mathlib_search"的pipeline循环，是否也能有好的效果。以及无tools，模型进行一次性completion给出证明的版本。
+- 我希望pipeline可以并行化，这样可以并行启动多个实例Pipeline高效推理测试benchmark，我最终的benchmark会有上千道题目。当前请基于benchmark_examples.jsonl来并行化测试。
+- "Ready-node gating differs from the paper. Nodes are dispatched only once all parent nodes are PROVED (bottom-up). The paper's sorry_using allows proving a node while assuming unproved parents, enabling broader parallelism and earlier feedback."，当前先基于Ready-node gating实现，没问题。当我实验测试稳定后再拓展到paper中的parallelism方法。
+- Definition nodes rendered as theorems. Blueprint nodes with kind: definition are currently assembled as theorem declarations in build_node_file. Lean rejects function-valued signatures with "type of theorem X is not a proposition". This blocks Putnam problems that require helper function definitions. 请修正这个bug。
+
+
+## benchmark更新
+我在路径`lean4_problems\benchmark\benchmark_examples.jsonl`展示了我未来将展示的结构化测评数据格式，不再使用原来的单一文件.lean形式。"lean4_code"即为输入的theorem。
+
+
+### 要求：
+- 在本地运行python时，请使用uv安装相应的包
+- 你负责规划，具体执行任务时请使用subagent让sonnet来执行
+- 遇到资源、环境、网络问题随时与我沟通

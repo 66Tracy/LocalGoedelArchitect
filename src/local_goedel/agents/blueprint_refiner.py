@@ -307,7 +307,6 @@ class BlueprintRefiner:
                 msg = self._llm.chat(
                     messages=messages,
                     tools=None,
-                    enable_thinking=False,
                 )
             except Exception as e:
                 self._logger.error("LLM error in refiner: %s", e)

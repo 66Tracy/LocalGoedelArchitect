@@ -24,6 +24,7 @@ class RunOutcome:
     blueprint: Optional[Blueprint] = None
     reason: str = ""
     iterations_used: int = 0
+    mode: str = ""
 
 
 @dataclass

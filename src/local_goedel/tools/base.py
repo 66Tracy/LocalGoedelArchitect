@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
+from local_goedel.assembly.canonical import CanonicalProblem
 from local_goedel.domain.lean_check import CheckResult
 from local_goedel.domain.node import BlueprintNode
 
@@ -34,6 +35,7 @@ class ToolContext:
     logger: logging.Logger
     attempts: int = 0
     last_check: Optional[CheckResult] = None
+    canonical: Optional[CanonicalProblem] = None
 
 
 class ToolRegistry:

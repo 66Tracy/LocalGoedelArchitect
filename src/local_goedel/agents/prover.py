@@ -246,7 +246,6 @@ class Prover:
             msg = self._llm.chat(
                 messages=messages,
                 tools=None,
-                enable_thinking=False,
             )
             content = ""
             if isinstance(getattr(msg, "content", None), str):

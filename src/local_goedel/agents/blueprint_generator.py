@@ -183,7 +183,6 @@ class BlueprintGenerator:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    enable_thinking=False,  # tools + thinking conflict
                 )
             except Exception as e:
                 self._logger.error("LLM error in generator: %s", e)

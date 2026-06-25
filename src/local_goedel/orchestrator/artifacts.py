@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,14 +35,26 @@ def _save_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+# Module-level lock for thread-safe run-id allocation.
+_make_run_id_lock = threading.Lock()
+
+
 def make_run_id(problem_name: str, runs_dir: Path) -> str:
-    """Create a unique run_id based on problem name + counter."""
+    """Create a unique run_id based on problem name + counter.
+
+    Thread-safe: a module-level lock ensures that two concurrent callers
+    never allocate the same counter and the directory is created inside the
+    lock so subsequent callers see it immediately.
+    """
     base = problem_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    # Find next available counter
-    i = 0
-    while (runs_dir / f"{base}_{i:03d}").exists():
-        i += 1
-    return f"{base}_{i:03d}"
+    with _make_run_id_lock:
+        i = 0
+        while (runs_dir / f"{base}_{i:03d}").exists():
+            i += 1
+        run_id = f"{base}_{i:03d}"
+        # Create the directory inside the lock so the next caller sees it.
+        (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+    return run_id
 
 
 class ArtifactWriter:
@@ -50,6 +63,7 @@ class ArtifactWriter:
     def __init__(self, run_id: str, runs_dir: Path, logger: Optional[logging.Logger] = None) -> None:
         self.run_id = run_id
         self.run_dir = runs_dir / run_id
+        # Directory was already created by make_run_id; use exist_ok for safety.
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._logger = logger or logging.getLogger(__name__)
 

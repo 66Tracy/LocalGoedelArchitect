@@ -35,7 +35,7 @@ def test_defaults():
     s = Settings()
     assert s.lean_server_url == "http://localhost:8000"
     assert s.mathlib_min_interval_s == 2.0
-    assert s.enable_thinking is False
+    assert s.enable_thinking is True
     assert isinstance(s.artifacts_dir, Path)
 
 
