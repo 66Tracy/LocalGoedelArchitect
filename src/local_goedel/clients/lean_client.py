@@ -1,7 +1,6 @@
 """Client for the Kimina Lean server."""
 from __future__ import annotations
 
-import threading
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -17,31 +16,6 @@ if TYPE_CHECKING:
 class LeanServerError(Exception):
     """Raised on transport failure talking to the Lean server."""
 
-
-# ---------------------------------------------------------------------------
-# Process-wide Lean concurrency semaphore
-# ---------------------------------------------------------------------------
-
-# A large initial value means "effectively unbounded" so that the single-
-# problem CLI path is unchanged.  The benchmark runner calls
-# set_lean_concurrency(n) before launching workers to cap simultaneous checks.
-_lean_semaphore: threading.BoundedSemaphore = threading.BoundedSemaphore(1024)
-
-
-def set_lean_concurrency(n: int) -> None:
-    """Set the maximum number of concurrent Lean check calls process-wide.
-
-    Call this ONCE before launching worker threads.  After calling this, every
-    LeanClient.check / LeanClient.check_batch call will acquire the semaphore
-    before touching the Lean server and release it afterwards (even on error).
-
-    Args:
-        n: Maximum simultaneous active Lean server calls (>= 1).
-    """
-    global _lean_semaphore
-    if n < 1:
-        raise ValueError(f"Lean concurrency must be >= 1, got {n}")
-    _lean_semaphore = threading.BoundedSemaphore(n)
 
 
 class LeanClient:
@@ -72,24 +46,16 @@ class LeanClient:
             return False
 
     def check(self, code: str, snippet_id: str | None = None) -> CheckResult:
-        """Check a single Lean snippet, return CheckResult.
-
-        Acquires the process-wide Lean concurrency semaphore for the duration
-        of the actual server call (including on exception).
-        """
+        """Check a single Lean snippet, return CheckResult."""
         if snippet_id is None:
             snippet_id = str(uuid.uuid4())
-        with _lean_semaphore:
-            results = self._check_batch_impl([(snippet_id, code)])
+        results = self._check_batch_impl([(snippet_id, code)])
         return results[0]
 
     def check_batch(
         self, items: list[tuple[str, str] | dict[str, str]]
     ) -> list[CheckResult]:
-        """Check multiple snippets. items: list of (id, code) tuples or dicts.
-
-        Each snippet is individually semaphore-gated via check().
-        """
+        """Check multiple snippets. items: list of (id, code) tuples or dicts."""
         results = []
         for item in items:
             if isinstance(item, dict):
@@ -100,7 +66,7 @@ class LeanClient:
         return results
 
     # ------------------------------------------------------------------
-    # Private implementation (no semaphore — callers handle that)
+    # Private implementation
     # ------------------------------------------------------------------
 
     def _check_batch_impl(

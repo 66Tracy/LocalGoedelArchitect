@@ -77,7 +77,6 @@ class Pipeline:
     def run(
         self,
         theorem_file_path: Optional[Path | str] = None,
-        difficulty: str = "easy",
         max_iter: Optional[int] = None,
         canonical: Optional[CanonicalProblem] = None,
         mode: Optional[str] = None,
@@ -88,8 +87,8 @@ class Pipeline:
         Args:
             theorem_file_path: Path to the .lean theorem file. Optional when
                 theorem_src is provided directly.
-            difficulty: "easy" or "hard" (used by 'full' mode only)
-            max_iter: Override max iterations (None = use settings; 'full' only)
+            max_iter: Override max iterations (None = use settings.default_max_iter;
+                'full' mode only).
             canonical: Optional pre-built CanonicalProblem. If None, derived
                 from theorem_src via split_canonical.
             mode: Override the mode from settings ("full", "tool_loop", "oneshot").
@@ -136,8 +135,8 @@ class Pipeline:
         _log_token = current_run_logfile.set(str(artifacts.log_path()))
 
         self._logger.info(
-            "Pipeline.run: %s (mode=%s, difficulty=%s)",
-            problem_name, effective_mode, difficulty,
+            "Pipeline.run: %s (mode=%s)",
+            problem_name, effective_mode,
         )
 
         # Save config and theorem
@@ -157,13 +156,19 @@ class Pipeline:
                     target_signature=target_signature,
                     canonical=canonical,
                     artifacts=artifacts,
-                    difficulty=difficulty,
                     max_iter=max_iter,
                 )
             elif effective_mode == "tool_loop":
                 outcome = self._run_tool_loop(
                     canonical=canonical,
                     artifacts=artifacts,
+                    allowed_tools=None,
+                )
+            elif effective_mode == "compile_loop":
+                outcome = self._run_tool_loop(
+                    canonical=canonical,
+                    artifacts=artifacts,
+                    allowed_tools={"lean_compile"},
                 )
             elif effective_mode == "oneshot":
                 outcome = self._run_oneshot(
@@ -191,24 +196,18 @@ class Pipeline:
         target_signature: str,
         canonical: CanonicalProblem,
         artifacts: ArtifactWriter,
-        difficulty: str = "easy",
         max_iter: Optional[int] = None,
     ) -> RunOutcome:
         """Full blueprint -> prove waves -> refine -> canonical finalize."""
         start_time = time.time()
 
         # Determine max iterations
-        if max_iter is not None:
-            max_iterations = max_iter
-        elif difficulty == "hard":
-            max_iterations = self._settings.iters_hard
-        else:
-            max_iterations = self._settings.iters_easy
+        max_iterations = max_iter if max_iter is not None else self._settings.default_max_iter
 
         # -- Step 1: Generate blueprint -------------------------------------------
         self._logger.info("Generating blueprint...")
         try:
-            blueprint = self._generator.generate(theorem_src, difficulty)
+            blueprint = self._generator.generate(theorem_src)
         except Exception as e:
             self._logger.error("Blueprint generation failed: %s", e)
             return RunOutcome(
@@ -367,15 +366,20 @@ class Pipeline:
         self,
         canonical: CanonicalProblem,
         artifacts: ArtifactWriter,
+        allowed_tools: Optional[set[str]] = None,
     ) -> RunOutcome:
         """Prove the canonical target directly using the Synthesizer tool loop.
 
-        No blueprint is generated.  The Synthesizer runs lean_compile +
-        mathlib_search in a loop against the canonical gate until it finds a
-        proof or exhausts its tool-call budget.
+        No blueprint is generated.  By default, the Synthesizer runs
+        lean_compile + mathlib_search in a loop against the canonical gate until
+        it finds a proof or exhausts its tool-call budget.  When allowed_tools
+        is provided (e.g. {"lean_compile"}), only those tools are exposed to the
+        LLM.
         """
         self._logger.info(
-            "_run_tool_loop: target=%s", canonical.thm_name
+            "_run_tool_loop: target=%s allowed_tools=%s",
+            canonical.thm_name,
+            allowed_tools,
         )
 
         synth_result = self._synthesizer.synthesize(
@@ -385,13 +389,14 @@ class Pipeline:
             lean_client=self._lean_client,
             mathlib_client=self._mathlib_client,
             max_tool_calls=self._settings.prover_max_tool_calls,
+            allowed_tools=allowed_tools,
         )
 
         if synth_result.success and synth_result.proof_body is not None:
             final_code = build_canonical_submission(
                 canonical, synth_result.proof_body, add_axiom_print=True
             )
-            self._logger.info("tool_loop: SUCCESS")
+            self._logger.info("_run_tool_loop: SUCCESS (allowed_tools=%s)", allowed_tools)
             artifacts.save_final(final_code, synth_result.check)
             return RunOutcome(
                 success=True,
@@ -402,7 +407,7 @@ class Pipeline:
             )
 
         reason = synth_result.reason or "Synthesizer failed without a reason"
-        self._logger.info("tool_loop: FAILED (%s)", reason)
+        self._logger.info("_run_tool_loop: FAILED (%s)", reason)
         placeholder = build_canonical_submission(canonical, "by sorry", add_axiom_print=False)
         artifacts.save_final(placeholder)
         return RunOutcome(

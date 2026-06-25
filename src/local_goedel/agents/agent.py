@@ -14,6 +14,7 @@ class AgentConfig:
     max_turns: int = 60
     max_tool_calls: int = 40
     system_prompt: str = ""
+    allowed_tools: Optional[set[str]] = None
 
 
 @dataclass
@@ -47,7 +48,7 @@ class Agent:
 
         messages.append({"role": "user", "content": user_prompt})
 
-        tools = self._registry.schemas()
+        tools = self._registry.schemas(self._config.allowed_tools)
         tool_call_count = 0
         budget_exceeded = False
 

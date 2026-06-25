@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any, Optional
 
 from local_goedel.logging_utils import get_logger
+from local_goedel.telemetry import get_telemetry
 
 if TYPE_CHECKING:
     from local_goedel.config import Settings
@@ -72,6 +73,9 @@ class LLMClient:
                         usage.completion_tokens,
                         usage.total_tokens,
                     )
+                tel = get_telemetry()
+                if tel is not None:
+                    tel.add_usage(usage)
                 message = response.choices[0].message
                 reasoning_content = getattr(message, "reasoning_content", None)
                 if reasoning_content:

@@ -435,3 +435,212 @@ class TestOneshotGateViaCanonical:
         # Should not have ':= :=' in the output
         assert ":= :=" not in final
         assert "positivity" in final
+
+
+# =============================================================================
+# compile_loop mode: validate_mode and _VALID_MODES
+# =============================================================================
+
+class TestCompileLoopMode:
+    """Tests for the compile_loop ablation mode (Change 5)."""
+
+    def test_validate_mode_compile_loop(self):
+        assert validate_mode("compile_loop") == "compile_loop"
+
+    def test_compile_loop_in_valid_modes(self):
+        from local_goedel.config import _VALID_MODES
+        assert "compile_loop" in _VALID_MODES
+
+
+# =============================================================================
+# ToolRegistry.schemas with allowed filter
+# =============================================================================
+
+class TestToolRegistrySchemas:
+    """Test the optional allowed-tools filter on ToolRegistry.schemas."""
+
+    def _make_registry(self):
+        from local_goedel.tools.base import ToolRegistry
+        from local_goedel.tools.lean_compile import LeanCompileTool
+        from local_goedel.tools.mathlib_search import MathlibSearchTool
+
+        reg = ToolRegistry()
+        reg.register(LeanCompileTool())
+        reg.register(MathlibSearchTool())
+        return reg
+
+    def test_schemas_no_filter_returns_both(self):
+        reg = self._make_registry()
+        schemas = reg.schemas()
+        names = {s["function"]["name"] for s in schemas}
+        assert names == {"lean_compile", "mathlib_search"}
+
+    def test_schemas_filter_lean_compile_only(self):
+        reg = self._make_registry()
+        schemas = reg.schemas({"lean_compile"})
+        assert len(schemas) == 1
+        assert schemas[0]["function"]["name"] == "lean_compile"
+
+    def test_schemas_filter_mathlib_search_only(self):
+        reg = self._make_registry()
+        schemas = reg.schemas({"mathlib_search"})
+        assert len(schemas) == 1
+        assert schemas[0]["function"]["name"] == "mathlib_search"
+
+    def test_schemas_empty_filter_returns_none(self):
+        reg = self._make_registry()
+        schemas = reg.schemas(set())
+        assert schemas == []
+
+    def test_schemas_none_filter_returns_all(self):
+        """schemas(None) is the same as schemas() — all tools returned."""
+        reg = self._make_registry()
+        assert len(reg.schemas(None)) == 2
+
+
+# =============================================================================
+# compile_loop pipeline dispatch: _run_tool_loop called with allowed_tools={"lean_compile"}
+# =============================================================================
+
+class TestCompileLoopDispatch:
+    """Verify that Pipeline.run('compile_loop') routes to _run_tool_loop with
+    allowed_tools={"lean_compile"} and that mathlib_search is never invoked."""
+
+    def _make_pipeline(self, mode: str = "compile_loop"):
+        from local_goedel.orchestrator.pipeline import Pipeline
+
+        settings = Settings(
+            api_key="test-key",
+            mode=mode,
+            runs_dir=str(Path("/tmp/test_runs")),
+        )
+        with (
+            patch("local_goedel.orchestrator.pipeline.LeanClient"),
+            patch("local_goedel.orchestrator.pipeline.MathlibSearchClient"),
+            patch("local_goedel.orchestrator.pipeline.LLMClient"),
+            patch("local_goedel.orchestrator.pipeline.Prover"),
+            patch("local_goedel.orchestrator.pipeline.Synthesizer"),
+            patch("local_goedel.orchestrator.pipeline.BlueprintGenerator"),
+            patch("local_goedel.orchestrator.pipeline.BlueprintRefiner"),
+        ):
+            return Pipeline(settings)
+
+    def test_dispatch_compile_loop(self, tmp_path):
+        """compile_loop calls _run_tool_loop; full/oneshot are never called."""
+        pipeline = self._make_pipeline("compile_loop")
+
+        lean_file = tmp_path / "t.lean"
+        lean_file.write_text(
+            "import Mathlib\ntheorem t (a b : Int) : a + b = b + a := by sorry\n",
+            encoding="utf-8",
+        )
+
+        stub_outcome = RunOutcome(success=True, reason="stubbed")
+        calls: dict = {"tool_loop": [], "full": 0, "oneshot": 0}
+
+        def fake_tool_loop(*a, **kw):
+            calls["tool_loop"].append(kw)
+            return stub_outcome
+
+        def fake_full(*a, **kw):
+            calls["full"] += 1
+            return stub_outcome
+
+        def fake_oneshot(*a, **kw):
+            calls["oneshot"] += 1
+            return stub_outcome
+
+        pipeline._run_full = fake_full
+        pipeline._run_tool_loop = fake_tool_loop
+        pipeline._run_oneshot = fake_oneshot
+
+        with (
+            patch("local_goedel.orchestrator.pipeline.make_run_id", return_value="t_000"),
+            patch("local_goedel.orchestrator.pipeline.ArtifactWriter") as mock_aw,
+        ):
+            mock_aw.return_value.log_path.return_value = tmp_path / "run.log"
+            mock_aw.return_value.save_config = MagicMock()
+            mock_aw.return_value.save_theorem = MagicMock()
+            mock_aw.return_value.save_outcome = MagicMock()
+
+            outcome = pipeline.run(theorem_file_path=lean_file, mode="compile_loop")
+
+        # _run_tool_loop was called exactly once
+        assert len(calls["tool_loop"]) == 1
+        # allowed_tools={"lean_compile"} was forwarded
+        assert calls["tool_loop"][0].get("allowed_tools") == {"lean_compile"}
+        # other branches untouched
+        assert calls["full"] == 0
+        assert calls["oneshot"] == 0
+        # outcome.mode is set to compile_loop
+        assert outcome.mode == "compile_loop"
+
+    def test_compile_loop_tool_loop_gets_lean_compile_only_schemas(self):
+        """ToolRegistry.schemas({"lean_compile"}) for compile_loop mode hides mathlib_search."""
+        from local_goedel.tools.base import ToolRegistry
+        from local_goedel.tools.lean_compile import LeanCompileTool
+        from local_goedel.tools.mathlib_search import MathlibSearchTool
+
+        reg = ToolRegistry()
+        reg.register(LeanCompileTool())
+        reg.register(MathlibSearchTool())
+
+        # Simulates what Agent.run() sees in compile_loop mode
+        schemas = reg.schemas({"lean_compile"})
+        names = [s["function"]["name"] for s in schemas]
+        assert names == ["lean_compile"]
+        assert "mathlib_search" not in names
+
+    def test_agent_config_allowed_tools_propagated(self):
+        """AgentConfig.allowed_tools is forwarded to registry.schemas in Agent.run()."""
+        from unittest.mock import call, patch
+        from local_goedel.agents.agent import Agent, AgentConfig
+        from local_goedel.tools.base import ToolContext, ToolRegistry
+        from local_goedel.tools.lean_compile import LeanCompileTool
+        from local_goedel.tools.mathlib_search import MathlibSearchTool
+        from local_goedel.domain.node import BlueprintNode, NodeKind, NodeStatus
+
+        reg = ToolRegistry()
+        reg.register(LeanCompileTool())
+        reg.register(MathlibSearchTool())
+
+        config = AgentConfig(
+            max_turns=1,
+            max_tool_calls=1,
+            system_prompt="",
+            allowed_tools={"lean_compile"},
+        )
+
+        # Mock LLM to return a terminal (no-tool-call) response immediately
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "done"
+        mock_response.tool_calls = []
+        mock_llm.chat.return_value = mock_response
+
+        dummy_node = BlueprintNode(
+            id="n1",
+            lean_name="t",
+            signature=": True",
+            kind=NodeKind.TARGET,
+            status=NodeStatus.PENDING,
+        )
+        ctx = ToolContext(
+            lean_client=MagicMock(),
+            mathlib_client=MagicMock(),
+            target_node=dummy_node,
+            parent_nodes=[],
+            settings=None,
+            logger=MagicMock(),
+        )
+
+        agent = Agent(llm_client=mock_llm, registry=reg, config=config)
+        agent.run("prove something", ctx)
+
+        # Inspect the tools= kwarg passed to llm.chat
+        assert mock_llm.chat.called
+        _, chat_kwargs = mock_llm.chat.call_args
+        tools_passed = chat_kwargs.get("tools") or []
+        tool_names = [t["function"]["name"] for t in tools_passed]
+        assert tool_names == ["lean_compile"]
+        assert "mathlib_search" not in tool_names

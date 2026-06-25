@@ -63,7 +63,6 @@ def test_full_pipeline_algebra_sqineq(settings):
     pipeline = Pipeline(settings)
     outcome = pipeline.run(
         theorem_file_path=THEOREM_FILE,
-        difficulty="easy",
         max_iter=2,
     )
 

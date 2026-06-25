@@ -86,7 +86,6 @@ Design a dependency graph blueprint for the following Lean 4 theorem.
 - lean_name: `{lean_name}`
 - signature: `{signature}`
 - Natural language: {nl_statement}
-- Difficulty: {difficulty}
 
 ## Instructions
 1. Emit a JSON blueprint with nodes in topological order (parents before children).
@@ -143,12 +142,11 @@ class BlueprintGenerator:
         self._settings = settings
         self._logger = logger or get_logger(__name__)
 
-    def generate(self, theorem_file_text: str, difficulty: str = "easy") -> Blueprint:
+    def generate(self, theorem_file_text: str) -> Blueprint:
         """Generate a Blueprint from a theorem file.
 
         Args:
             theorem_file_text: Full content of the .lean theorem file
-            difficulty: "easy" or "hard"
 
         Returns:
             Blueprint with all nodes PENDING
@@ -160,7 +158,6 @@ class BlueprintGenerator:
             lean_name=lean_name,
             signature=signature,
             nl_statement=docstring or "(no docstring)",
-            difficulty=difficulty,
         )
 
         messages: list[dict[str, Any]] = [

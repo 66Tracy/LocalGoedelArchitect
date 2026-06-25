@@ -224,3 +224,5 @@ runs/
 cli.log
 # Scratch/working files
 scratchpad/
+# Claude Code local agent state (plans, session settings)
+.claude/

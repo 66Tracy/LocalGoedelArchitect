@@ -366,8 +366,7 @@ class TestFinalizeFastPath:
         settings.runs_dir = "runs"
         settings.prover_max_turns = 5
         settings.prover_max_tool_calls = 5
-        settings.iters_easy = 1
-        settings.iters_hard = 2
+        settings.default_max_iter = 1
         settings.max_wall_s = 3600
 
         stub_lean = MagicMock()

@@ -23,7 +23,7 @@ def benchmark_main(argv: list[str]) -> int:
         epilog=(
             "Example:\n"
             "  uv run python -m local_goedel.cli benchmark bench.jsonl "
-            "--mode tool_loop --workers 2 --lean-concurrency 1 --limit 10"
+            "--mode tool_loop --workers 2"
         ),
     )
     parser.add_argument(
@@ -33,7 +33,7 @@ def benchmark_main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["full", "tool_loop", "oneshot"],
+        choices=["full", "tool_loop", "oneshot", "compile_loop"],
         default="full",
         help="Pipeline mode (default: full)",
     )
@@ -44,33 +44,17 @@ def benchmark_main(argv: list[str]) -> int:
         help="Number of parallel worker threads (default: 2)",
     )
     parser.add_argument(
-        "--lean-concurrency",
-        type=int,
-        default=2,
-        dest="lean_concurrency",
-        help="Max simultaneous Lean server calls (default: 2)",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Process at most this many records",
-    )
-    parser.add_argument(
-        "--difficulty",
-        choices=["auto", "easy", "hard"],
-        default="auto",
-        help=(
-            "Difficulty override: 'auto' uses per-record mapping, "
-            "'easy'/'hard' forces all records to that difficulty (default: auto)"
-        ),
-    )
-    parser.add_argument(
         "--out",
         type=Path,
         default=None,
         dest="out_dir",
         help="Output directory for summary files (default: runs/benchmark_<timestamp>)",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=1,
+        help="pass@k: max attempts per problem, early-stop on first success (default: 1)",
     )
     parser.add_argument(
         "--env",
@@ -95,15 +79,10 @@ def benchmark_main(argv: list[str]) -> int:
         )
         return 1
 
-    difficulty_override = args.difficulty if args.difficulty != "auto" else None
-
     print(f"Benchmark: {args.jsonl}")
     print(f"Mode: {args.mode}")
-    print(f"Workers: {args.workers}  Lean-concurrency: {args.lean_concurrency}")
-    if args.limit:
-        print(f"Limit: {args.limit}")
-    if difficulty_override:
-        print(f"Difficulty override: {difficulty_override}")
+    print(f"Workers: {args.workers}")
+    print(f"pass@k: {args.k}")
     print()
 
     from local_goedel.benchmark.runner import run_benchmark
@@ -113,10 +92,8 @@ def benchmark_main(argv: list[str]) -> int:
         settings=settings,
         mode=args.mode,
         workers=args.workers,
-        lean_concurrency=args.lean_concurrency,
-        limit=args.limit,
-        difficulty_override=difficulty_override,
         out_dir=args.out_dir,
+        k=args.k,
     )
 
     print()
@@ -135,19 +112,13 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Example:\n"
-            "  uv run python -m local_goedel.cli problem.lean --difficulty easy --max-iter 4"
+            "  uv run python -m local_goedel.cli problem.lean --max-iter 4"
         ),
     )
     parser.add_argument(
         "theorem_file",
         type=Path,
         help="Path to the .lean theorem file to prove",
-    )
-    parser.add_argument(
-        "--difficulty",
-        choices=["easy", "hard"],
-        default="easy",
-        help="Difficulty level (affects max iterations)",
     )
     parser.add_argument(
         "--max-iter",
@@ -184,7 +155,6 @@ def main() -> int:
         print("WARNING: Lean server not responding at", settings.lean_server_url, file=sys.stderr)
 
     print(f"Proving: {theorem_file}")
-    print(f"Difficulty: {args.difficulty}")
     if args.max_iter:
         print(f"Max iterations: {args.max_iter}")
 
@@ -193,7 +163,6 @@ def main() -> int:
     try:
         outcome = pipeline.run(
             theorem_file_path=theorem_file,
-            difficulty=args.difficulty,
             max_iter=args.max_iter,
         )
     except ValueError as exc:

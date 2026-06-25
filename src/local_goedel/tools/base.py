@@ -8,6 +8,7 @@ from typing import Any, Optional, Protocol
 from local_goedel.assembly.canonical import CanonicalProblem
 from local_goedel.domain.lean_check import CheckResult
 from local_goedel.domain.node import BlueprintNode
+from local_goedel.telemetry import get_telemetry
 
 
 @dataclass
@@ -45,10 +46,17 @@ class ToolRegistry:
     def register(self, tool: Any) -> None:
         self._tools[tool.name] = tool
 
-    def schemas(self) -> list[dict[str, Any]]:
-        """Return OpenAI-format tool schemas."""
+    def schemas(self, allowed: Optional[set[str]] = None) -> list[dict[str, Any]]:
+        """Return OpenAI-format tool schemas.
+
+        Args:
+            allowed: If provided, only include tools whose name is in this set.
+                     When None (default), all registered tools are returned.
+        """
         result = []
         for tool in self._tools.values():
+            if allowed is not None and tool.name not in allowed:
+                continue
             result.append({
                 "type": "function",
                 "function": {
@@ -61,6 +69,9 @@ class ToolRegistry:
 
     def dispatch(self, name: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         """Dispatch a tool call by name."""
+        tel = get_telemetry()
+        if tel is not None:
+            tel.add_tool_call(name)
         if name not in self._tools:
             return ToolResult(ok=False, content=f"Unknown tool: {name}")
         return self._tools[name].run(args, ctx)

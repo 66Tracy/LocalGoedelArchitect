@@ -1,0 +1,1 @@
+{"id": "smoke_add", "header": "import Mathlib", "formal_statement": "theorem smoke_add : 1 + 1 = 2 := by sorry", "lean4_code": "import Mathlib\ntheorem smoke_add : 1 + 1 = 2 := by sorry"}

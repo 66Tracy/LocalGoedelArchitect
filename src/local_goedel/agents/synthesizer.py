@@ -88,6 +88,7 @@ class Synthesizer:
         lean_client: Any,
         mathlib_client: Any,
         max_tool_calls: Optional[int] = None,
+        allowed_tools: Optional[set[str]] = None,
     ) -> SynthesisResult:
         """Attempt to synthesize a canonical proof body.
 
@@ -133,6 +134,7 @@ class Synthesizer:
             max_turns=self._max_turns,
             max_tool_calls=effective_max_calls,
             system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
+            allowed_tools=allowed_tools,
         )
 
         agent = Agent(

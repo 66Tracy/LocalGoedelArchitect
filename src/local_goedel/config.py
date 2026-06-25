@@ -26,8 +26,7 @@ class Settings:
     artifacts_dir: Path = field(default_factory=lambda: Path("artifacts"))
 
     # Phase 2 fields
-    iters_easy: int = 8
-    iters_hard: int = 16
+    default_max_iter: int = 8
     blueprint_max_retries: int = 6
     refiner_max_retries: int = 6
     max_wall_s: int = 3600
@@ -84,7 +83,7 @@ def load_settings(env_path: str | Path | None = None) -> Settings:
     return settings
 
 
-_VALID_MODES = frozenset({"full", "tool_loop", "oneshot"})
+_VALID_MODES = frozenset({"full", "tool_loop", "oneshot", "compile_loop"})
 
 
 def validate_mode(mode: str) -> str:
