@@ -62,3 +62,37 @@
 - 你负责规划，具体执行任务时请使用subagent让sonnet来执行
 - 遇到资源、环境、网络问题随时与我沟通
 - 本地测试时，资源有限，尽量以小的并发、大的请求间隔来完成测试，确定功能无误即可
+
+
+# 2026/06/28
+
+## 项目bug修复：
+项目并发运行过程发现了logger串线的bug，请你分析并解决。一个现象是，屏幕会同时出现多条相同的logger日志显示。还有一个现象是，xx题目的日志中会出现token消耗异常的现象：如下所示，在2026-06-27 22:48:05的LLM usage为total46332，而在2026-06-27 22:48:28时却为total=26780，理论上不应该出现降低的情况，多轮问答不应该是持续升高的吗？
+```log
+2026-06-27 22:47:41 [INFO] local_goedel.agents.synthesizer: Dispatching tool 'lean_compile' (call 14)
+2026-06-27 22:47:41 [INFO] local_goedel.agents.synthesizer: Agent turn 15/105
+2026-06-27 22:47:41 [DEBUG] local_goedel.clients.llm_client: LLM call attempt 1 model=deepseek-v4-flash msgs=30
+2026-06-27 22:48:05 [INFO] local_goedel.clients.llm_client: LLM usage: prompt=43947 completion=2385 total=46332
+2026-06-27 22:48:05 [DEBUG] local_goedel.clients.llm_client: LLM thinking: We need to avoid sorry. Let's try to fill with something else: use `exact` with `False.elim`? We need to produce a term of the required type.
+
+Let's step back. Maybe the theorem is actually provable using the fact that the set S is defined in such a way that it must contain 20. Let's try to reason differently.
+
+Consider the condition for n=20: We need to prove that if all |a_i| < 1 for i≤20, then the equality holds. Maybe we can prove this by using the definition for n=19? For n=19, we know some
+2026-06-27 22:48:05 [INFO] local_goedel.agents.synthesizer: Dispatching tool 'mathlib_search' (call 15)
+2026-06-27 22:48:05 [INFO] local_goedel.clients.mathlib_client: Mathlib search: '"∑ k ∈ Finset.Icc 1 n, abs (a k)"' limit=5
+2026-06-27 22:48:06 [INFO] local_goedel.clients.mathlib_client: Mathlib search returned 5 hits
+2026-06-27 22:48:06 [INFO] local_goedel.agents.synthesizer: Agent turn 16/105
+2026-06-27 22:48:06 [DEBUG] local_goedel.clients.llm_client: LLM call attempt 1 model=deepseek-v4-flash msgs=32
+2026-06-27 22:48:28 [INFO] local_goedel.clients.llm_client: LLM usage: prompt=24870 completion=1910 total=26780
+2026-06-27 22:48:28 [DEBUG] local_goedel.clients.llm_client: LLM thinking: There's lemma `Finset.abs_sum_le_sum_abs` which says |∑| ≤ ∑| |. That is triangle inequality. That could be useful.
+```
+
+## 项目修改建议：
+- **参数修改建议**：在cli输入参数中，增加prover_max_tool_calls和prover_max_turns参数的设置。
+- **mathlib_client参数修改**：修改工具描述以及limit限制，上限为5而不是10。
+
+### 要求：
+- 在本地运行python时，请使用uv安装相应的包
+- 你负责规划，具体执行任务时请使用subagent让sonnet来执行
+- 遇到资源、环境、网络问题随时与我沟通
+- 本地测试时，资源有限，尽量以小的并发、大的请求间隔来完成测试，确定功能无误即可；无需考虑我公司的服务器地址，因为是内网，外部无法访问，迁移服务的事情由我自己解决

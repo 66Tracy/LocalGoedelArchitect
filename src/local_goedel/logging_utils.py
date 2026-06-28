@@ -8,13 +8,19 @@ ThreadPoolExecutor, naively adding a FileHandler per Pipeline to the shared
 handler sees all records from all threads) and duplicate console lines N
 times.
 
-The fix uses a single ``RoutingFileHandler`` installed ONCE on the
-``local_goedel`` logger.  It reads a ``contextvars.ContextVar`` to decide
-which file to write to.  Because ContextVars are *thread-local-inherited*
-(each new thread gets a copy of the creator's value, which is ``None``), each
-worker thread sets its own copy at the start of a run without affecting other
-threads.  The handler skips the record when the var is ``None`` (e.g. when
-logging from the main thread without an active run).
+The fix centralises ALL handlers on the single ``local_goedel`` root logger,
+configured EXACTLY ONCE under a ``threading.Lock``.  A single
+``RoutingFileHandler`` reads a ``contextvars.ContextVar`` on every ``emit``
+to decide which file to write to.  Because ContextVars are thread-local-
+inherited, each worker thread sets its own copy at the start of a run without
+affecting other threads.
+
+When the ContextVar is ``None`` (main thread / orchestration code with no
+active run), records are written to the global fallback file
+(``logs/local_goedel.log`` by default) rather than being dropped, so
+orchestration logs are still captured.  Per-problem records always have the
+ContextVar set inside ``pipeline.run``, so they go ONLY to their ``run.log``;
+the global file never receives interleaved per-problem agent logs.
 
 Usage pattern in pipeline.run / run_one::
 
@@ -30,13 +36,14 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from contextvars import ContextVar
 from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
 # Module-level ContextVar: set to the path of the current run's log file.
-# None means "no active run log" (records are silently dropped by the router).
+# None means "no active run" — records go to the global fallback file.
 # ---------------------------------------------------------------------------
 current_run_logfile: ContextVar[str | None] = ContextVar(
     "current_run_logfile", default=None
@@ -59,37 +66,40 @@ class AsciiSafeFormatter(logging.Formatter):
 class RoutingFileHandler(logging.Handler):
     """A single handler that routes each log record to the current run's file.
 
-    It reads ``current_run_logfile`` on every emit().  If the var is ``None``
-    the record is silently discarded (no active run context).  Otherwise it
-    opens (or reuses) the appropriate FileHandler.
+    It reads ``current_run_logfile`` on every ``emit()``.  If the var is
+    ``None`` the record is written to the module-level ``_global_log_file``
+    (orchestration / main-thread records).  Otherwise it opens (or reuses)
+    the per-run FileHandler identified by the ContextVar path.
 
     FileHandler caching: we keep a dict of path → FileHandler so that we
     don't open/close the same file on every log call.  Handlers are closed
-    when ``close()`` is called (at process exit or test teardown).  For a
-    thousands-problem benchmark the dict can grow, but each entry is just an
-    open file handle, which is acceptable.
+    when ``close()`` is called (at process exit or test teardown).  Cache
+    insertion is guarded by its own lock to be safe under concurrency.
     """
 
     def __init__(self) -> None:
         super().__init__(level=logging.DEBUG)
         self._handlers: dict[str, logging.FileHandler] = {}
+        self._cache_lock = threading.Lock()
         self._fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
     def _get_handler(self, path: str) -> logging.FileHandler:
-        if path not in self._handlers:
-            fh = logging.FileHandler(path, encoding="utf-8")
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(self._fmt)
-            self._handlers[path] = fh
-        return self._handlers[path]
+        with self._cache_lock:
+            if path not in self._handlers:
+                fh = logging.FileHandler(path, encoding="utf-8")
+                fh.setLevel(logging.DEBUG)
+                fh.setFormatter(self._fmt)
+                self._handlers[path] = fh
+            return self._handlers[path]
 
     def emit(self, record: logging.LogRecord) -> None:
         path = current_run_logfile.get()
         if path is None:
-            return
+            # Write to global fallback instead of dropping.
+            path = _global_log_file
         # Ensure parent directory exists (make_run_id creates it, but be safe).
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -102,73 +112,97 @@ class RoutingFileHandler(logging.Handler):
             self.handleError(record)
 
     def close(self) -> None:
-        for fh in self._handlers.values():
-            fh.close()
-        self._handlers.clear()
+        with self._cache_lock:
+            for fh in self._handlers.values():
+                fh.close()
+            self._handlers.clear()
         super().close()
 
 
-# Module-level singleton so we install it only once.
-_routing_handler: RoutingFileHandler | None = None
+# ---------------------------------------------------------------------------
+# Thread-safe one-time configuration of the ``local_goedel`` root logger.
+# ---------------------------------------------------------------------------
+
+_config_lock = threading.Lock()
+_configured: bool = False
+_global_log_file: str = str(
+    Path(os.environ.get("LOG_DIR", "logs")) / "local_goedel.log"
+)
 
 
-def _ensure_routing_handler(logger: logging.Logger) -> None:
-    """Install the routing handler on *logger* if not already present."""
-    global _routing_handler
-    # Guard: only add if not already there (idempotent).
-    for h in logger.handlers:
-        if isinstance(h, RoutingFileHandler):
-            _routing_handler = h
+def _configure_root(log_dir: str | Path | None = None) -> None:
+    """Configure the ``local_goedel`` logger ONCE, thread-safely.
+
+    Installs exactly one console ``StreamHandler`` (level INFO,
+    ``AsciiSafeFormatter``) and one ``RoutingFileHandler`` (level DEBUG) on
+    the ``local_goedel`` root logger.  Subsequent calls from any thread are
+    no-ops once configuration is complete (double-checked locking).
+
+    *log_dir* is only honoured on the first call that actually configures the
+    logger; it sets the global fallback log path used by
+    ``RoutingFileHandler`` when ``current_run_logfile`` is ``None``.
+    """
+    global _configured, _global_log_file
+
+    # Fast path — already configured.
+    if _configured:
+        return
+
+    with _config_lock:
+        # Double-checked locking: re-test after acquiring the lock.
+        if _configured:
             return
-    _routing_handler = RoutingFileHandler()
-    logger.addHandler(_routing_handler)
+
+        if log_dir is not None:
+            _global_log_file = str(Path(log_dir) / "local_goedel.log")
+
+        root = logging.getLogger("local_goedel")
+        root.setLevel(logging.DEBUG)
+        root.propagate = False  # don't double-emit via the real root logger
+
+        # Check what is already present (e.g. after test-fixture reset).
+        # Identify OUR console handler by its AsciiSafeFormatter so we don't
+        # confuse it with pytest's LogCaptureHandler (also a StreamHandler
+        # subclass) or any other third-party handler on this logger.
+        has_console = any(
+            isinstance(h, logging.StreamHandler)
+            and not isinstance(h, RoutingFileHandler)
+            and isinstance(getattr(h, "formatter", None), AsciiSafeFormatter)
+            for h in root.handlers
+        )
+        has_routing = any(isinstance(h, RoutingFileHandler) for h in root.handlers)
+
+        if not has_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            console_fmt = AsciiSafeFormatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
+            console_handler.setFormatter(console_fmt)
+            root.addHandler(console_handler)
+
+        if not has_routing:
+            routing_handler = RoutingFileHandler()
+            root.addHandler(routing_handler)
+
+        _configured = True
 
 
 def get_logger(name: str, log_dir: str | Path | None = None) -> logging.Logger:
-    """Get a logger writing UTF-8 to file + ASCII-safe to console.
+    """Return a logger under the ``local_goedel`` hierarchy.
 
-    The first call on the root ``local_goedel`` logger also installs the
-    module-level ``RoutingFileHandler`` so that per-run log routing works
-    under concurrent execution without duplicating console lines.
+    All I/O is handled by the ``local_goedel`` root logger's handlers (one
+    console ``StreamHandler`` + one ``RoutingFileHandler``).  Child loggers
+    inherit the root's level and propagate records up — NO per-child handlers
+    are added, so there is no risk of duplicated console lines or interleaved
+    file writes under concurrent execution.
+
+    *log_dir* sets the directory for the global fallback log file (only
+    honoured on the first call that triggers configuration); defaults to the
+    ``LOG_DIR`` env var or ``logs/``.
     """
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        # Already configured; ensure the routing handler is present on the
-        # root local_goedel logger even if this call is for a child logger.
-        root_lg = logging.getLogger("local_goedel")
-        _ensure_routing_handler(root_lg)
-        return logger
-
-    logger.setLevel(logging.DEBUG)
-
-    # File handler - full UTF-8 (global log, not the per-run routing handler)
     if log_dir is None:
         log_dir = Path(os.environ.get("LOG_DIR", "logs"))
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "local_goedel.log"
-
-    file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_fmt)
-    logger.addHandler(file_handler)
-
-    # Console handler - ASCII-safe (one per logger, no duplication)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_fmt = AsciiSafeFormatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    console_handler.setFormatter(console_fmt)
-    logger.addHandler(console_handler)
-
-    # Install the routing handler on the root local_goedel logger.
-    root_lg = logging.getLogger("local_goedel")
-    _ensure_routing_handler(root_lg)
-
-    return logger
+    _configure_root(log_dir)
+    return logging.getLogger(name)

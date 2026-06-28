@@ -53,7 +53,7 @@ class MathlibSearchClient:
             _last_request_time = time.monotonic()
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:
-        limit = min(limit, 10)
+        limit = min(limit, 5)
         self._logger.info("Mathlib search: %r limit=%d", query, limit)
 
         for attempt in range(self._max_retries):

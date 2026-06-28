@@ -10,8 +10,8 @@ class MathlibSearchTool:
     name = "mathlib_search"
     schema = {
         "description": (
-            "Search Mathlib for relevant lemmas, theorems, or definitions. "
-            "Use for specific lemma lookups, not to find the proof directly."
+            "Search Mathlib for specific lemma names and signatures to use in a proof "
+            "(returns at most 5 results). Use for targeted Mathlib lookups, not to find the proof itself."
         ),
         "parameters": {
             "type": "object",
@@ -22,7 +22,7 @@ class MathlibSearchTool:
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max results (1-10, default 5).",
+                    "description": "Max results (1-5, default 5).",
                     "default": 5,
                 },
             },
@@ -32,7 +32,7 @@ class MathlibSearchTool:
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         query = args.get("query", "")
-        limit = min(int(args.get("limit", 5)), 10)
+        limit = max(1, min(int(args.get("limit", 5)), 5))
 
         if not query.strip():
             return ToolResult(ok=False, content="Query cannot be empty.")

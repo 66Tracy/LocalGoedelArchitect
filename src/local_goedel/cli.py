@@ -62,6 +62,18 @@ def benchmark_main(argv: list[str]) -> int:
         default=Path(".env"),
         help="Path to .env file (default: .env)",
     )
+    parser.add_argument(
+        "--prover-max-tool-calls",
+        type=int,
+        default=None,
+        help="Override prover max tool calls (default: Settings value, 40)",
+    )
+    parser.add_argument(
+        "--prover-max-turns",
+        type=int,
+        default=None,
+        help="Override prover max turns (default: Settings value, 60)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -71,6 +83,11 @@ def benchmark_main(argv: list[str]) -> int:
 
     env_path = args.env if args.env.exists() else None
     settings = load_settings(env_path=env_path)
+
+    if args.prover_max_tool_calls is not None:
+        settings.prover_max_tool_calls = args.prover_max_tool_calls
+    if args.prover_max_turns is not None:
+        settings.prover_max_turns = args.prover_max_turns
 
     if not settings.api_key:
         print(
@@ -83,6 +100,7 @@ def benchmark_main(argv: list[str]) -> int:
     print(f"Mode: {args.mode}")
     print(f"Workers: {args.workers}")
     print(f"pass@k: {args.k}")
+    print(f"Prover budget: max_tool_calls={settings.prover_max_tool_calls} max_turns={settings.prover_max_turns}")
     print()
 
     from local_goedel.benchmark.runner import run_benchmark
@@ -132,6 +150,18 @@ def main() -> int:
         default=Path(".env"),
         help="Path to .env file (default: .env)",
     )
+    parser.add_argument(
+        "--prover-max-tool-calls",
+        type=int,
+        default=None,
+        help="Override prover max tool calls (default: Settings value, 40)",
+    )
+    parser.add_argument(
+        "--prover-max-turns",
+        type=int,
+        default=None,
+        help="Override prover max turns (default: Settings value, 60)",
+    )
 
     args = parser.parse_args()
 
@@ -143,6 +173,11 @@ def main() -> int:
     # Load settings
     env_path = args.env if args.env.exists() else None
     settings = load_settings(env_path=env_path)
+
+    if args.prover_max_tool_calls is not None:
+        settings.prover_max_tool_calls = args.prover_max_tool_calls
+    if args.prover_max_turns is not None:
+        settings.prover_max_turns = args.prover_max_turns
 
     if not settings.api_key:
         print("ERROR: No API key found (set DEEPSEEK_API_KEY in .env or environment)", file=sys.stderr)
