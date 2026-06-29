@@ -139,8 +139,8 @@ class Pipeline:
             problem_name, effective_mode,
         )
 
-        # Save config and theorem
-        artifacts.save_config(self._settings)
+        # Save config and theorem (pass effective_mode so CLI --mode is recorded)
+        artifacts.save_config(self._settings, mode=effective_mode)
         artifacts.save_theorem(theorem_src)
 
         try:

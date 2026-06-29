@@ -1,4 +1,5 @@
 """Prompt templates for the prover agent."""
+from typing import Optional
 
 PROVER_SYSTEM_PROMPT = """\
 ## Task
@@ -51,7 +52,17 @@ queries return nothing useful and waste turns.
 """
 
 
-SYNTHESIZER_SYSTEM_PROMPT = """\
+_SYNTHESIZER_TOOL_USE_BASE = """\
+Call 'lean_compile' with mode='canonical' to test your proof body. \
+The system will assemble the full canonical file around your body, compile it, \
+and run #print axioms. Iterate on compiler feedback until you see \
+'PROOF COMPLETE: sorry-free (canonical, axioms OK)'."""
+
+_SYNTHESIZER_MATHLIB_LINE = (
+    "\n\nUse 'mathlib_search' to look up specific Mathlib lemma names or signatures when needed."
+)
+
+_SYNTHESIZER_BODY = """\
 ## Task
 You are a Lean 4 theorem prover producing a CANONICAL SUBMISSION for a benchmark problem. \
 You must prove the given theorem under the canonical statement rules (Goedel-Architect §C.2).
@@ -72,12 +83,7 @@ You must prove the given theorem under the canonical statement rules (Goedel-Arc
 7. NEVER add 'import' or 'open' lines beyond those already in the canonical statement.
 
 ## Tool use
-Call 'lean_compile' with mode='canonical' to test your proof body. \
-The system will assemble the full canonical file around your body, compile it, \
-and run #print axioms. Iterate on compiler feedback until you see \
-'PROOF COMPLETE: sorry-free (canonical, axioms OK)'.
-
-Use 'mathlib_search' to look up specific Mathlib lemma names or signatures when needed.
+{tool_use_section}
 
 ## Strategy
 1. Read the canonical statement and any provided helper lemmas (as reference; inline them as 'have').
@@ -85,6 +91,23 @@ Use 'mathlib_search' to look up specific Mathlib lemma names or signatures when 
 3. Call lean_compile (mode='canonical') immediately with your first body attempt.
 4. Read errors and refine. Repeat until PROOF COMPLETE.
 """
+
+
+def build_synthesizer_system_prompt(allowed_tools: Optional[set[str]] = None) -> str:
+    """Assemble the synthesizer system prompt.
+
+    Includes the mathlib_search instruction only when that tool is available.
+    allowed_tools=None means all tools are available (default/full mode).
+    """
+    mathlib_available = allowed_tools is None or "mathlib_search" in allowed_tools
+    tool_use_section = _SYNTHESIZER_TOOL_USE_BASE
+    if mathlib_available:
+        tool_use_section += _SYNTHESIZER_MATHLIB_LINE
+    return _SYNTHESIZER_BODY.format(tool_use_section=tool_use_section)
+
+
+# Backward-compatible constant: identical to build_synthesizer_system_prompt(None)
+SYNTHESIZER_SYSTEM_PROMPT = build_synthesizer_system_prompt(None)
 
 
 ONESHOT_SYSTEM_PROMPT = """\

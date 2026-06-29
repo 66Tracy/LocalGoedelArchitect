@@ -67,8 +67,15 @@ class ArtifactWriter:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._logger = logger or logging.getLogger(__name__)
 
-    def save_config(self, settings: Any) -> None:
-        """Save config (without API key) to config.json."""
+    def save_config(self, settings: Any, mode: Optional[str] = None) -> None:
+        """Save config (without API key) to config.json.
+
+        Args:
+            settings: Settings object (dataclass or namespace) to serialise.
+            mode: When provided, overrides the ``mode`` field in the written
+                JSON. Use this to record the effective CLI ``--mode`` value,
+                which may differ from ``settings.mode`` (the env-var default).
+        """
         if dataclasses.is_dataclass(settings):
             d = dataclasses.asdict(settings)
         else:
@@ -80,6 +87,8 @@ class ArtifactWriter:
         for k, v in d.items():
             if isinstance(v, Path):
                 d[k] = str(v)
+        if mode is not None:
+            d["mode"] = mode
         _save_json(self.run_dir / "config.json", d)
 
     def save_theorem(self, theorem_src: str) -> None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from local_goedel.agents.agent import Agent, AgentConfig, AgentRun
-from local_goedel.agents.prompts import SYNTHESIZER_SYSTEM_PROMPT
+from local_goedel.agents.prompts import build_synthesizer_system_prompt
 from local_goedel.assembly.axiom_check import uses_sorry
 from local_goedel.assembly.canonical import (
     CanonicalProblem,
@@ -133,7 +133,7 @@ class Synthesizer:
         config = AgentConfig(
             max_turns=self._max_turns,
             max_tool_calls=effective_max_calls,
-            system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
+            system_prompt=build_synthesizer_system_prompt(allowed_tools),
             allowed_tools=allowed_tools,
         )
 

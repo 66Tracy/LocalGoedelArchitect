@@ -644,3 +644,251 @@ class TestCompileLoopDispatch:
         tool_names = [t["function"]["name"] for t in tools_passed]
         assert tool_names == ["lean_compile"]
         assert "mathlib_search" not in tool_names
+
+
+# =============================================================================
+# Bug 1a: dispatch guard — blocked disallowed tool never executed
+# =============================================================================
+
+class TestDispatchGuard:
+    """Agent.run must not dispatch tools outside allowed_tools, even when the
+    LLM hallucinates such a call."""
+
+    def _make_ctx(self):
+        from local_goedel.tools.base import ToolContext
+        from local_goedel.domain.node import BlueprintNode, NodeKind, NodeStatus
+
+        dummy_node = BlueprintNode(
+            id="n1",
+            lean_name="t",
+            signature=": True",
+            kind=NodeKind.TARGET,
+            status=NodeStatus.PENDING,
+        )
+        return ToolContext(
+            lean_client=MagicMock(),
+            mathlib_client=MagicMock(),
+            target_node=dummy_node,
+            parent_nodes=[],
+            settings=None,
+            logger=MagicMock(),
+        )
+
+    def test_disallowed_tool_never_dispatched(self):
+        """When allowed_tools={"lean_compile"}, a hallucinated mathlib_search
+        call must NOT reach the registry dispatch (and must not call .search)."""
+        from local_goedel.agents.agent import Agent, AgentConfig
+        from local_goedel.tools.base import ToolRegistry
+        from local_goedel.tools.lean_compile import LeanCompileTool
+        from local_goedel.tools.mathlib_search import MathlibSearchTool
+
+        # Build registry with both tools
+        reg = ToolRegistry()
+        reg.register(LeanCompileTool())
+        mathlib_tool = MathlibSearchTool()
+        reg.register(mathlib_tool)
+
+        config = AgentConfig(
+            max_turns=5,
+            max_tool_calls=10,
+            system_prompt="",
+            allowed_tools={"lean_compile"},
+        )
+
+        # Turn 1: LLM emits a mathlib_search tool call
+        mathlib_tc = MagicMock()
+        mathlib_tc.id = "call_ms_001"
+        mathlib_tc.function.name = "mathlib_search"
+        mathlib_tc.function.arguments = '{"query": "Nat.add_comm"}'
+
+        first_response = MagicMock()
+        first_response.content = None
+        first_response.tool_calls = [mathlib_tc]
+
+        # Turn 2: LLM returns no tool calls (done)
+        second_response = MagicMock()
+        second_response.content = "I give up"
+        second_response.tool_calls = []
+
+        mock_llm = MagicMock()
+        mock_llm.chat.side_effect = [first_response, second_response]
+
+        ctx = self._make_ctx()
+        agent = Agent(llm_client=mock_llm, registry=reg, config=config)
+
+        # Spy on the registry dispatch to confirm mathlib_search is never dispatched
+        original_dispatch = reg.dispatch
+        dispatched_names: list[str] = []
+
+        def spy_dispatch(name, args, ctx_):
+            dispatched_names.append(name)
+            return original_dispatch(name, args, ctx_)
+
+        reg.dispatch = spy_dispatch
+
+        # Also spy on mathlib_client.search (belt-and-suspenders)
+        ctx.mathlib_client.search = MagicMock()
+
+        run = agent.run("prove something", ctx)
+
+        # mathlib_search must NEVER have been dispatched
+        assert "mathlib_search" not in dispatched_names, (
+            f"mathlib_search was dispatched despite being disallowed; dispatched={dispatched_names}"
+        )
+        # mathlib_client.search must NEVER have been called
+        ctx.mathlib_client.search.assert_not_called()
+
+        # The tool-result message for the blocked call must contain "not available"
+        tool_result_msgs = [
+            m for m in run.messages
+            if m.get("role") == "tool" and m.get("tool_call_id") == "call_ms_001"
+        ]
+        assert len(tool_result_msgs) == 1
+        assert "not available" in tool_result_msgs[0]["content"]
+
+    def test_blocked_tool_still_counts_toward_budget(self):
+        """A blocked (disallowed) tool call still increments tool_call_count."""
+        from local_goedel.agents.agent import Agent, AgentConfig
+        from local_goedel.tools.base import ToolRegistry
+        from local_goedel.tools.lean_compile import LeanCompileTool
+        from local_goedel.tools.mathlib_search import MathlibSearchTool
+
+        reg = ToolRegistry()
+        reg.register(LeanCompileTool())
+        reg.register(MathlibSearchTool())
+
+        # Very tight budget: 1 tool call
+        config = AgentConfig(
+            max_turns=5,
+            max_tool_calls=1,
+            system_prompt="",
+            allowed_tools={"lean_compile"},
+        )
+
+        blocked_tc = MagicMock()
+        blocked_tc.id = "call_ms_002"
+        blocked_tc.function.name = "mathlib_search"
+        blocked_tc.function.arguments = '{"query": "test"}'
+
+        first_response = MagicMock()
+        first_response.content = None
+        first_response.tool_calls = [blocked_tc]
+
+        second_response = MagicMock()
+        second_response.content = "ok done"
+        second_response.tool_calls = []
+
+        mock_llm = MagicMock()
+        mock_llm.chat.side_effect = [first_response, second_response]
+
+        ctx = self._make_ctx()
+        agent = Agent(llm_client=mock_llm, registry=reg, config=config)
+        run = agent.run("prove something", ctx)
+
+        # 1 blocked call should have consumed the 1-call budget
+        assert run.tool_call_count == 1
+
+
+# =============================================================================
+# Bug 1b: build_synthesizer_system_prompt is mode-aware
+# =============================================================================
+
+class TestBuildSynthesizerSystemPrompt:
+    """build_synthesizer_system_prompt should include/exclude mathlib_search
+    depending on what tools are allowed."""
+
+    def test_none_allowed_includes_mathlib_search(self):
+        """allowed_tools=None means all tools — mathlib_search line present."""
+        from local_goedel.agents.prompts import build_synthesizer_system_prompt
+        prompt = build_synthesizer_system_prompt(None)
+        assert "mathlib_search" in prompt
+
+    def test_lean_compile_only_excludes_mathlib_search(self):
+        """When only lean_compile is allowed, mathlib_search line must be absent."""
+        from local_goedel.agents.prompts import build_synthesizer_system_prompt
+        prompt = build_synthesizer_system_prompt({"lean_compile"})
+        assert "mathlib_search" not in prompt
+
+    def test_mathlib_in_allowed_includes_line(self):
+        """When mathlib_search is explicitly in allowed_tools, line is present."""
+        from local_goedel.agents.prompts import build_synthesizer_system_prompt
+        prompt = build_synthesizer_system_prompt({"lean_compile", "mathlib_search"})
+        assert "mathlib_search" in prompt
+
+    def test_backward_compat_constant(self):
+        """SYNTHESIZER_SYSTEM_PROMPT constant equals build_synthesizer_system_prompt(None)."""
+        from local_goedel.agents.prompts import SYNTHESIZER_SYSTEM_PROMPT, build_synthesizer_system_prompt
+        assert SYNTHESIZER_SYSTEM_PROMPT == build_synthesizer_system_prompt(None)
+
+    def test_lean_compile_section_always_present(self):
+        """lean_compile instructions are present regardless of allowed_tools."""
+        from local_goedel.agents.prompts import build_synthesizer_system_prompt
+        for allowed in [None, {"lean_compile"}, {"lean_compile", "mathlib_search"}]:
+            prompt = build_synthesizer_system_prompt(allowed)
+            assert "lean_compile" in prompt, f"lean_compile missing for allowed={allowed}"
+
+
+# =============================================================================
+# Bug 2: ArtifactWriter.save_config records effective mode
+# =============================================================================
+
+class TestSaveConfigMode:
+    """ArtifactWriter.save_config must record the effective mode, not settings.mode."""
+
+    def test_save_config_mode_override(self, tmp_path):
+        """Passing mode='oneshot' writes 'oneshot' to config.json even when
+        settings.mode == 'full'."""
+        import json
+        from local_goedel.orchestrator.artifacts import ArtifactWriter, make_run_id
+        from local_goedel.config import Settings
+
+        settings = Settings(api_key="test-key", mode="full")
+        run_id = make_run_id("test_problem", tmp_path)
+        writer = ArtifactWriter(run_id, tmp_path)
+
+        writer.save_config(settings, mode="oneshot")
+
+        config_path = tmp_path / run_id / "config.json"
+        assert config_path.exists()
+        with open(config_path, encoding="utf-8") as f:
+            saved = json.load(f)
+
+        assert saved["mode"] == "oneshot", (
+            f"Expected mode='oneshot' but got {saved.get('mode')!r}"
+        )
+
+    def test_save_config_no_mode_uses_settings(self, tmp_path):
+        """When mode is not passed, the settings.mode value is preserved."""
+        import json
+        from local_goedel.orchestrator.artifacts import ArtifactWriter, make_run_id
+        from local_goedel.config import Settings
+
+        settings = Settings(api_key="test-key", mode="tool_loop")
+        run_id = make_run_id("test_problem2", tmp_path)
+        writer = ArtifactWriter(run_id, tmp_path)
+
+        writer.save_config(settings)
+
+        config_path = tmp_path / run_id / "config.json"
+        with open(config_path, encoding="utf-8") as f:
+            saved = json.load(f)
+
+        assert saved["mode"] == "tool_loop"
+
+    def test_save_config_no_api_key_leaked(self, tmp_path):
+        """API key must never appear in config.json."""
+        import json
+        from local_goedel.orchestrator.artifacts import ArtifactWriter, make_run_id
+        from local_goedel.config import Settings
+
+        settings = Settings(api_key="super-secret", mode="full")
+        run_id = make_run_id("test_problem3", tmp_path)
+        writer = ArtifactWriter(run_id, tmp_path)
+
+        writer.save_config(settings, mode="compile_loop")
+
+        config_path = tmp_path / run_id / "config.json"
+        with open(config_path, encoding="utf-8") as f:
+            raw = f.read()
+
+        assert "super-secret" not in raw

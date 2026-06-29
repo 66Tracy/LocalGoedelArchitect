@@ -135,6 +135,20 @@ class Agent:
                     fn_args = {}
                     self._logger.warning("Failed to parse tool args: %s", tc.function.arguments)
 
+                # Dispatch guard: block tools not in allowed_tools
+                if self._config.allowed_tools is not None and fn_name not in self._config.allowed_tools:
+                    self._logger.warning("Blocked disallowed tool %r", fn_name)
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": (
+                            f"Tool '{fn_name}' is not available in this mode. "
+                            f"Available tools: {sorted(self._config.allowed_tools)}. "
+                            "Do not call it again."
+                        ),
+                    })
+                    continue
+
                 self._logger.info("Dispatching tool %r (call %d)", fn_name, tool_call_count)
                 result = self._registry.dispatch(fn_name, fn_args, ctx)
 

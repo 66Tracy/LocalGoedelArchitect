@@ -96,3 +96,16 @@ Consider the condition for n=20: We need to prove that if all |a_i| < 1 for i≤
 - 你负责规划，具体执行任务时请使用subagent让sonnet来执行
 - 遇到资源、环境、网络问题随时与我沟通
 - 本地测试时，资源有限，尽量以小的并发、大的请求间隔来完成测试，确定功能无误即可；无需考虑我公司的服务器地址，因为是内网，外部无法访问，迁移服务的事情由我自己解决
+
+
+# 2026/06/29
+
+## 项目bug修复：
+- 项目运行过程发现，compile_loop模式时，由于system中还带有mathlib_search参数，即使tools里没有提供，模型也有概率返回调用mathlib_search函数，甚至后台可能也执行了？我不确定，请你排查并修正。
+- benchmark测试，命令行方法传入mode=oneshot/tool_loop时，runs/xxx/config.json中的"mode": "full"始终是"full"，只有指定了环境变量mode时，才会记录正确的值；小bug，请修复。
+
+### 要求：
+- 在本地运行python时，请使用uv安装相应的包
+- 你负责规划，具体执行任务时请使用subagent让sonnet来执行
+- 遇到资源、环境、网络问题随时与我沟通
+- 本地测试时，资源有限，尽量以小的并发、大的请求间隔来完成测试，确定功能无误即可；无需考虑我公司的服务器地址，因为是内网，外部无法访问，迁移服务的事情由我自己解决
